@@ -68,6 +68,8 @@ export default function TaskBoard() {
   const [showPeopleModal, setShowPeopleModal] = useState(false);
   const [showCatDropdown, setShowCatDropdown] = useState(false);
   const [showAssigneeDropdown, setShowAssigneeDropdown] = useState(false);
+  const [viewMode, setViewMode] = useState<'board' | 'calendar'>('board');
+  const [calMonth, setCalMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskCategory, setNewTaskCategory] = useState('MENU');
 
@@ -249,6 +251,10 @@ export default function TaskBoard() {
           <span className="header-deadline">Global Deadline: June 15</span>
         </div>
         <div className="header-actions">
+          <div className="pill-group">
+            <button className={`pill ${viewMode === 'board' ? 'active' : ''}`} onClick={() => setViewMode('board')}>📋 Board</button>
+            <button className={`pill ${viewMode === 'calendar' ? 'active' : ''}`} onClick={() => setViewMode('calendar')}>📅 Calendar</button>
+          </div>
           <button className="btn" onClick={() => setShowPeopleModal(true)}>👤 People</button>
         </div>
       </header>
@@ -345,34 +351,46 @@ export default function TaskBoard() {
         <button className="btn btn-gold" onClick={createTask}>+ Add Task</button>
       </div>
 
-      {/* Task Grid */}
-      {groupByCategory ? (
-        Object.entries(grouped).map(([cat, catTasks]) => {
-          const info = CATEGORIES[cat];
-          const doneCount = catTasks.filter(t => t.status === 'done').length;
-          const overdueCount = catTasks.filter(t => isOverdue(t.due_date) && t.status !== 'done').length;
-          return (
-            <div key={cat} className="category-group">
-              <div className="category-header">
-                <h2 style={{ color: info.color }}>{info.label}</h2>
-                <span className="category-stats">
-                  {catTasks.length} tasks | {doneCount} done{overdueCount > 0 ? ` | ${overdueCount} overdue` : ''}
-                </span>
-              </div>
-              <div className="task-grid">
-                {catTasks.map(task => (
-                  <TaskCard key={task.id} task={task} onOpen={openDrawer} onCycleStatus={cycleStatus} />
-                ))}
-              </div>
+      {/* Views */}
+      {viewMode === 'board' ? (
+        <>
+          {groupByCategory ? (
+            Object.entries(grouped).map(([cat, catTasks]) => {
+              const info = CATEGORIES[cat];
+              const doneCount = catTasks.filter(t => t.status === 'done').length;
+              const overdueCount = catTasks.filter(t => isOverdue(t.due_date) && t.status !== 'done').length;
+              return (
+                <div key={cat} className="category-group">
+                  <div className="category-header">
+                    <h2 style={{ color: info.color }}>{info.label}</h2>
+                    <span className="category-stats">
+                      {catTasks.length} tasks | {doneCount} done{overdueCount > 0 ? ` | ${overdueCount} overdue` : ''}
+                    </span>
+                  </div>
+                  <div className="task-grid">
+                    {catTasks.map(task => (
+                      <TaskCard key={task.id} task={task} onOpen={openDrawer} onCycleStatus={cycleStatus} />
+                    ))}
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <div className="task-grid flat">
+              {filtered.map(task => (
+                <TaskCard key={task.id} task={task} onOpen={openDrawer} onCycleStatus={cycleStatus} />
+              ))}
             </div>
-          );
-        })
+          )}
+        </>
       ) : (
-        <div className="task-grid flat">
-          {filtered.map(task => (
-            <TaskCard key={task.id} task={task} onOpen={openDrawer} onCycleStatus={cycleStatus} />
-          ))}
-        </div>
+        <CalendarView
+          tasks={filtered}
+          month={calMonth}
+          onChangeMonth={setCalMonth}
+          onOpenTask={openDrawer}
+          onCycleStatus={cycleStatus}
+        />
       )}
 
       {/* Drawer */}
@@ -516,6 +534,127 @@ export default function TaskBoard() {
         </div>
       )}
     </>
+  );
+}
+
+function CalendarView({ tasks, month, onChangeMonth, onOpenTask, onCycleStatus }: {
+  tasks: Task[];
+  month: Date;
+  onChangeMonth: (d: Date) => void;
+  onOpenTask: (t: Task) => void;
+  onCycleStatus: (t: Task, e: React.MouseEvent) => void;
+}) {
+  const year = month.getFullYear();
+  const mo = month.getMonth();
+  const firstDay = new Date(year, mo, 1).getDay();
+  const daysInMonth = new Date(year, mo + 1, 0).getDate();
+  const today = new Date().toISOString().split('T')[0];
+  const monthLabel = month.toLocaleString('default', { month: 'long', year: 'numeric' });
+
+  const prevMonth = () => onChangeMonth(new Date(year, mo - 1, 1));
+  const nextMonth = () => onChangeMonth(new Date(year, mo + 1, 1));
+
+  // Build task map by date
+  const tasksByDate: Record<string, Task[]> = {};
+  for (const t of tasks) {
+    if (t.due_date) {
+      if (!tasksByDate[t.due_date]) tasksByDate[t.due_date] = [];
+      tasksByDate[t.due_date].push(t);
+    }
+  }
+
+  // Unscheduled tasks
+  const unscheduled = tasks.filter(t => !t.due_date);
+
+  // Build calendar grid cells
+  const cells: (number | null)[] = [];
+  for (let i = 0; i < firstDay; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  return (
+    <div className="cal-container">
+      <div className="cal-header">
+        <button className="btn btn-sm" onClick={prevMonth}>◀</button>
+        <h2 className="cal-month-label">{monthLabel}</h2>
+        <button className="btn btn-sm" onClick={nextMonth}>▶</button>
+      </div>
+      <div className="cal-grid">
+        {dayNames.map(d => (
+          <div key={d} className="cal-day-name">{d}</div>
+        ))}
+        {cells.map((day, i) => {
+          if (day === null) return <div key={`empty-${i}`} className="cal-cell cal-cell-empty" />;
+          const dateStr = `${year}-${String(mo + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+          const dayTasks = tasksByDate[dateStr] || [];
+          const isToday = dateStr === today;
+          const isPast = dateStr < today;
+          return (
+            <div key={dateStr} className={`cal-cell ${isToday ? 'cal-today' : ''} ${isPast ? 'cal-past' : ''}`}>
+              <div className="cal-date-num">{day}</div>
+              <div className="cal-tasks">
+                {dayTasks.slice(0, 4).map(t => {
+                  const cat = CATEGORIES[t.category];
+                  return (
+                    <div
+                      key={t.id}
+                      className={`cal-task-pill ${t.status === 'done' ? 'cal-task-done' : ''}`}
+                      style={{ borderLeftColor: cat?.color || '#555' }}
+                      onClick={() => onOpenTask(t)}
+                      title={t.title}
+                    >
+                      <span className="cal-task-title">{t.title}</span>
+                      <button
+                        className="cal-task-status"
+                        style={{ color: STATUS_COLORS[t.status] }}
+                        onClick={(e) => onCycleStatus(t, e)}
+                      >
+                        {t.status === 'done' ? '✓' : t.status === 'in_progress' ? '◐' : '○'}
+                      </button>
+                    </div>
+                  );
+                })}
+                {dayTasks.length > 4 && (
+                  <div className="cal-more">+{dayTasks.length - 4} more</div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {unscheduled.length > 0 && (
+        <div className="cal-unscheduled">
+          <h3 className="cal-unscheduled-title">Unscheduled Tasks ({unscheduled.length})</h3>
+          <div className="cal-unscheduled-grid">
+            {unscheduled.map(t => {
+              const cat = CATEGORIES[t.category];
+              return (
+                <div
+                  key={t.id}
+                  className={`cal-task-pill cal-task-pill-flat ${t.status === 'done' ? 'cal-task-done' : ''}`}
+                  style={{ borderLeftColor: cat?.color || '#555' }}
+                  onClick={() => onOpenTask(t)}
+                >
+                  <span className="category-badge" style={{ background: (cat?.color || '#555') + '33', color: cat?.color || '#555', fontSize: 9, padding: '1px 6px' }}>
+                    {cat?.label || t.category}
+                  </span>
+                  <span className="cal-task-title">{t.title}</span>
+                  <button
+                    className="cal-task-status"
+                    style={{ color: STATUS_COLORS[t.status] }}
+                    onClick={(e) => onCycleStatus(t, e)}
+                  >
+                    {t.status === 'done' ? '✓' : t.status === 'in_progress' ? '◐' : '○'}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
